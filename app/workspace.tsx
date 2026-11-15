@@ -5,10 +5,10 @@ import {
   ArrowLeft, ArrowRight, CalendarDays, ChevronDown, ClipboardList,
   FileText, History as HistoryIcon, LayoutGrid, Package, Pencil, Plus, Printer, RefreshCw,
   Search, SlidersHorizontal, Trash2, Users, Wallet, X, Activity, CircleHelp, PanelLeft,
-  ArrowUpRight, Check, ChevronRight, Ellipsis, Receipt, Stethoscope,
+  ArrowUpRight, Check, ChevronRight, Ellipsis, Receipt, Stethoscope, LogOut,
 } from "lucide-react";
 import {
-  blankItem, blankSale, columns, invoiceNumber, lineTotals, money, normalized, retention, status, totals,
+  blankItem, blankSale, columns, invoiceNumber, lineTotals, money, normalized, retention, status, totals, todayDate,
   type Customer, type History, type Item, type Product, type Row, type Sale, type Workspace,
 } from "../lib/sales";
 import { reportData } from "../lib/reports";
@@ -74,7 +74,14 @@ function SuggestInput({ label, value, options, onChange, onPick, placeholder, ty
     <input aria-label={label} type={type} value={value} placeholder={placeholder} autoComplete="off"
       inputMode={["Qty", "Sell Rate", "Cost Rate", "Paid"].includes(label) ? "decimal" : undefined}
       onFocus={() => { setOpen(Boolean(value)); setSelected(0); }}
-      onBlur={() => setOpen(false)} onKeyDown={handleKey}
+      onBlur={() => {
+        setOpen(false);
+        if (onPick && value.trim()) {
+          const match = (options ?? []).find(option => normalized(option) === normalized(value.trim()));
+          if (match) onPick(match);
+        }
+      }}
+      onKeyDown={handleKey}
       onChange={event => { onChange(event.target.value); setOpen(Boolean(event.target.value)); setSelected(0); }} />
     {open && onPick && matches.length > 0 && <div className="suggestions">
       {matches.map((option, index) => <button type="button" tabIndex={-1} className={selected === index ? "highlight" : ""}
@@ -175,17 +182,57 @@ export function SalesWorkspace({ displayName }: { displayName: string }) {
   const update = (fn: (data: Sale) => Sale) => setEdit(current => current ? { ...current, data: fn(current.data) } : null);
   const field = (key: keyof Omit<Sale, "items">, value: string) => update(data => ({ ...data, [key]: value }));
   const itemField = (index: number, key: keyof Item, value: string) =>
-    update(data => ({ ...data, items: data.items.map((item, i) => i === index ? { ...item, [key]: value } : item) }));
+    update(data => {
+      if (key === "fee" && index === 0) {
+        const prevFee = data.items[0]?.fee ?? data.customerFee;
+        return {
+          ...data,
+          customerFee: value,
+          items: data.items.map((item, i) => {
+            if (i === 0) return { ...item, fee: value };
+            if (!item.fee || item.fee === prevFee || item.fee === data.customerFee) {
+              return { ...item, fee: value };
+            }
+            return item;
+          }),
+        };
+      }
+      return {
+        ...data,
+        items: data.items.map((item, i) => (i === index ? { ...item, [key]: value } : item)),
+      };
+    });
 
   function pickCustomer(name: string) {
     const key = normalized(name);
     const manual = workspace.customers.find(customer => normalized(customer.name) === key);
     const latest = recent.find(row => normalized(row.data.customer) === key)?.data;
     const fee = manual?.fee ?? (latest?.customerFee || latest?.items.find(item => item.fee)?.fee || "");
-    update(data => ({
-      ...data, customer: name, city: manual?.city || latest?.city || "", customerFee: fee,
-      items: data.items.map(item => ({ ...item, fee: item.fee === data.customerFee ? fee : item.fee || fee })),
-    }));
+    update(data => {
+      const isNewSale = !edit?.revision;
+      const previousItems = (latest?.items || [])
+        .filter(item => activeItem(item, latest?.customerFee || ""))
+        .map(item => ({
+          product: item.product || "",
+          qty: item.qty || "1",
+          rate: item.rate || "",
+          cost: item.cost || "",
+          fee: item.fee || fee || "",
+        }));
+
+      const items = isNewSale
+        ? (previousItems.length > 0 ? previousItems : [{ ...blankItem(), fee }])
+        : data.items.map(item => ({ ...item, fee: item.fee === data.customerFee ? fee : item.fee || fee }));
+
+      return {
+        ...data,
+        customer: name,
+        city: manual?.city || latest?.city || data.city || "",
+        surgeon: data.surgeon || latest?.surgeon || "",
+        customerFee: fee,
+        items,
+      };
+    });
   }
 
   function pickProduct(index: number, name: string) {
@@ -213,7 +260,7 @@ export function SalesWorkspace({ displayName }: { displayName: string }) {
 
   function start(row?: Row) {
     if (edit) { setMessage({ text: "Save or cancel the open entry first." }); return; }
-    setEdit(row ? { id: row.id, revision: row.revision, data: structuredClone(row.data) } : { id: crypto.randomUUID(), data: blankSale() });
+    setEdit(row ? { id: row.id, revision: row.revision, data: structuredClone(row.data) } : { id: crypto.randomUUID(), data: { ...blankSale(), date: todayDate() } });
     setMessage(null);
     if (tab !== "Sales sheet") selectTab("Sales sheet");
   }
@@ -241,6 +288,19 @@ export function SalesWorkspace({ displayName }: { displayName: string }) {
     Trash: "Restore a deleted sale within 14 days.",
   };
 
+  async function logout() {
+    try {
+      await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "logout" }),
+      });
+    } catch {
+      // ignore network errors
+    }
+    window.location.href = "/login";
+  }
+
   return <div className="app">
     {mobile && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMobile(false)} />}
     <aside className={"sidebar" + (mobile ? " opened" : "")}>
@@ -248,12 +308,24 @@ export function SalesWorkspace({ displayName }: { displayName: string }) {
       <nav aria-label="Workspace">{tabs.map(([name, Icon]) => <button key={name} aria-current={tab === name ? "page" : undefined} className={tab === name ? "nav active" : "nav"} onClick={() => selectTab(name)}>
         <Icon size={18} strokeWidth={1.65} /><span>{name}</span>{tab === name && <ChevronRight className="nav-chevron" size={14} />}
       </button>)}</nav>
-      <div className="sidebar-bottom"><button className="nav" onClick={() => setHelp(true)}><CircleHelp size={19} /><span>Quick guide</span></button>
-        <div className="profile"><div className="avatar">{displayName.slice(0, 1).toUpperCase()}</div><div><strong>{displayName}</strong><span>Private workspace</span></div></div>
+      <div className="sidebar-bottom">
+        <button className="nav" onClick={() => setHelp(true)}><CircleHelp size={19} /><span>Quick guide</span></button>
+        <button className="nav logout-nav" onClick={logout}><LogOut size={19} /><span>Log out</span></button>
+        <div className="profile">
+          <div className="avatar">{displayName.slice(0, 1).toUpperCase()}</div>
+          <div style={{ flex: 1, minWidth: 0 }}><strong>{displayName}</strong><span>Private workspace</span></div>
+          <button className="logout-icon-btn" title="Log out" aria-label="Log out" onClick={logout}><LogOut size={16} /></button>
+        </div>
       </div>
     </aside>
     <div className="main">
-      <div className="topbar"><div className="breadcrumb"><button className="icon-button mobile-menu" aria-label="Toggle navigation" aria-expanded={mobile} onClick={() => setMobile(!mobile)}><PanelLeft size={19} /></button><span>Workspace</span><ChevronRight size={13} /><strong>{tab}</strong></div><span className="top-currency"><i />{loading ? "Connecting…" : connected ? "Private workspace" : "Connection unavailable"}</span></div>
+      <div className="topbar">
+        <div className="breadcrumb"><button className="icon-button mobile-menu" aria-label="Toggle navigation" aria-expanded={mobile} onClick={() => setMobile(!mobile)}><PanelLeft size={19} /></button><span>Workspace</span><ChevronRight size={13} /><strong>{tab}</strong></div>
+        <div className="topbar-actions">
+          <span className="top-currency"><i />{loading ? "Connecting…" : connected ? "Private workspace" : "Connection unavailable"}</span>
+          <button className="secondary logout-topbar-btn" title="Log out" onClick={logout}><LogOut size={14} /><span>Log out</span></button>
+        </div>
+      </div>
       <main className="content">
         <div className="page-heading"><div><h1>{tab}</h1><p>{titleText[tab]}</p></div>
           <div className="heading-actions">{tab === "Sales sheet" && <button className="secondary" onClick={() => selectTab("Reports")}><Activity size={16} /> Reports <ArrowUpRight size={13} /></button>}
@@ -275,11 +347,15 @@ export function SalesWorkspace({ displayName }: { displayName: string }) {
             <button className="secondary" onClick={() => setDetails(true)}><Stethoscope size={16} /> Invoice details</button></div>
           <div className="editor-body">
             <div className="editor-fields">
-              <label className="wide-field"><span>Customer</span><SuggestInput label="Customer" value={edit.data.customer} options={customers} onChange={value => field("customer", value)} onPick={pickCustomer} placeholder="Search or enter a name" /></label>
-              <label><span>Sale date</span><SuggestInput label="Sale date" type="date" value={edit.data.date} onChange={value => field("date", value)} /></label>
+              <label className="wide-field"><span>Customer</span><SuggestInput label="Customer" value={edit.data.customer} options={customers} onChange={value => {
+                field("customer", value);
+                const match = customers.find(c => normalized(c) === normalized(value.trim()));
+                if (match) pickCustomer(match);
+              }} onPick={pickCustomer} placeholder="Search or enter a name" /></label>
+              <label><span>Sale date <small style={{ color: "var(--muted)", fontWeight: 400 }}>({dateLabel(edit.data.date || todayDate())})</small></span><SuggestInput label="Sale date" type="date" value={edit.data.date || todayDate()} onChange={value => field("date", value)} /></label>
               <label><span>DC reference</span><SuggestInput label="DC reference" value={edit.data.dc} onChange={value => field("dc", value)} placeholder="Enter reference" /></label>
             </div>
-            <div className="editor-subhead"><h3>Instruments</h3><span>Rates in PKR</span></div>
+            <div className="editor-subhead"><h3>Instruments</h3><div style={{ display: "flex", alignItems: "center", gap: 10 }}><span>Rates in PKR</span>{edit.data.items.length > 1 && <button type="button" className="quiet" style={{ fontSize: 11, padding: "2px 7px", minHeight: 22 }} onClick={() => update(data => ({ ...data, items: [{ ...blankItem(), fee: data.customerFee }] }))}>Clear all</button>}</div></div>
             <div className="editor-lines">
               <div className="editor-line editor-labels" aria-hidden="true"><span>Instrument</span><span>Qty</span><span>Sell rate</span><span>Cost rate</span><span>Comm. / tax</span><span>Line total</span><span /></div>
               {edit.data.items.map((item, index) => <div className="editor-line" key={index}>
@@ -288,7 +364,7 @@ export function SalesWorkspace({ displayName }: { displayName: string }) {
                 {edit.data.items.length > 1 && <button className="icon-button danger-icon" aria-label={"Remove instrument " + (index + 1)} onClick={() => update(data => ({ ...data, items: data.items.filter((_, i) => i !== index) }))}><X size={16} /></button>}
               </div>)}
             </div>
-            <button className="add-item" onClick={() => update(data => ({ ...data, items: [...data.items, { ...blankItem(), fee: data.customerFee }] }))}><Plus size={15} /> Add instrument</button>
+            <button className="add-item" onClick={() => update(data => ({ ...data, items: [...data.items, { ...blankItem(), fee: data.customerFee || data.items[0]?.fee || "" }] }))}><Plus size={15} /> Add instrument</button>
             <div className="editor-finance">
               <label><span>Amount paid</span><SuggestInput label="Paid" value={edit.data.paid} onChange={value => field("paid", value)} placeholder="0.00" /></label>
               <dl>{([["Total sale", "total"], ["Total cost", "costTotal"], ["Outstanding", "pending"], ["Net profit", "profit"]] as const).map(([label, key]) => <div key={key}><dt>{label}</dt><dd>{money(totals(edit.data)[key])}</dd></div>)}</dl>

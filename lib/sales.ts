@@ -21,9 +21,18 @@ export type Product = { name: string; rate: string; cost: string };
 export type Workspace = { rows: Row[]; customers: Customer[]; products: Product[]; storage?: "supabase" | "local" };
 export type History = { revision: number; savedAt: number; data: Sale };
 
+export function todayDate() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Karachi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export const blankItem = (): Item => ({ product: "", qty: "", rate: "", cost: "", fee: "" });
 export const blankSale = (): Sale => ({
-  date: "", dc: "", customer: "", city: "", surgeon: "", patient: "", room: "",
+  date: todayDate(), dc: "", customer: "", city: "", surgeon: "", patient: "", room: "",
   ip: "", paid: "", customerFee: "", items: [blankItem()],
 });
 
@@ -94,7 +103,12 @@ export function cleanNumber(value: unknown, percent = false) {
 export function cleanSale(input: unknown): Sale {
   if (!input || typeof input !== "object") throw new Error("Sale details are missing.");
   const data = input as Partial<Sale>;
-  const date = cleanText(data.date, 10);
+  let date = cleanText(data.date, 10);
+  if (/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(date)) {
+    const [d, m, y] = date.split(/[\/\-]/);
+    date = `${y}-${m}-${d}`;
+  }
+  if (!date) date = todayDate();
   if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) ||
     new Date(date).toISOString().slice(0, 10) !== date)) throw new Error("Enter a valid date.");
   const items = Array.isArray(data.items) ? data.items : [];

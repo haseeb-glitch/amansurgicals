@@ -18,9 +18,15 @@ body { font-family: "Instrument Sans", "Segoe UI", Arial, sans-serif; font-size:
 .nav.active { background: #dcece0; color: #183d35; }
 .nav.active svg { color: #285e52; }
 .nav-chevron { margin-left: auto; }
+.logout-nav:hover { background: #ffffff18; color: #ff9e9e; }
 .profile { border-color: #ffffff20; }
 .avatar { background: #315a4f; color: #e3f1e8; }
+.logout-icon-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; color: #b7cbc0; border-radius: 6px; padding: 6px; cursor: pointer; transition: all .15s; }
+.logout-icon-btn:hover { background: #ffffff18; color: #ff9e9e; }
 .topbar { height: 58px; }
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.logout-topbar-btn { padding: 4px 10px; min-height: 30px; font-size: 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; }
+.logout-topbar-btn:hover { color: #b73242; border-color: #f0c3c8; background: #fff5f5; }
 .breadcrumb { gap: 8px; font-size: 12px; }
 .breadcrumb svg { color: #688178; }
 .top-currency { display: flex; align-items: center; gap: 7px; }

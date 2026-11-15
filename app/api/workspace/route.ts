@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { getUser } from "../../auth";
 import { cleanNumber, cleanSale, cleanText, normalized, retention } from "../../../lib/sales";
 import { getSupabase } from "../../../lib/supabase";
 
@@ -21,7 +21,7 @@ function decode(row: Record<string, unknown>) {
 const saleColumns = "id, number, data, revision, created_at AS createdAt, updated_at AS updatedAt, deleted_at AS deletedAt";
 
 export async function GET(request: Request) {
-  if (!(await getChatGPTUser())) return reply({ error: "Sign in to access this workspace." }, 401);
+  if (!(await getUser())) return reply({ error: "Sign in to access this workspace." }, 401);
 
   const supabase = getSupabase();
   const history = new URL(request.url).searchParams.get("history");
@@ -113,7 +113,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!(await getChatGPTUser())) return reply({ error: "Sign in to access this workspace." }, 401);
+  if (!(await getUser())) return reply({ error: "Sign in to access this workspace." }, 401);
   if (
     request.headers.get("origin") !== new URL(request.url).origin ||
     !request.headers.get("content-type")?.includes("application/json")
